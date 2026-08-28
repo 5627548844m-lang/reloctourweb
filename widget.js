@@ -13,7 +13,7 @@
 
   // Текст на кнопках лендинга, которые должны открывать чат.
   // Чтобы «Как это устроено» осталась якорем — очистите массив: var CATCH = [];
-  var CATCH = [];;
+  var CATCH = [];
 
   var CSS = [
     ".rt-launch{position:fixed;right:22px;bottom:22px;z-index:99998;padding:14px 24px;",
