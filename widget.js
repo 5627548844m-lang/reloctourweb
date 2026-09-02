@@ -1,185 +1,268 @@
-// RELÓCTOUR — чат на сайте. Прокси к Claude API.
-// Ключ ANTHROPIC_API_KEY хранится в переменных Netlify и в браузер не попадает.
+/* RELÓCTOUR — чат на сайте. Подключается одной строкой:
+   <script src="/widget.js" defer></script>
+   Версия 3: переживает перерисовку страницы, ссылки кликабельны. */
 
-const SYSTEM_PROMPT = `Ты — консультант RELÓCTOUR на сайте reloctour.com.
+(function () {
+  "use strict";
 
-# СЕРВИС
+  var API = "/.netlify/functions/chat";
 
-RELÓCTOUR — релокационные туры. Человек приезжает на 3–7 дней, местный гид-резидент, который сам переехал 1–5 лет назад, показывает настоящую жизнь страны: районы, аренду, документы, банки, школы, реальные цены.
+  var GREETING =
+    "Здравствуйте. Помогу разобраться, подходит ли вам страна — честно, без уговоров.\n\n" +
+    "Сейчас работаем по Испании, Таиланду, Панаме и Франции. С чего начнём?";
 
-Слоган: «Понять, подходит ли вам страна, — осознанно, а не вслепую.»
+  // Текст кнопок лендинга, которые тоже должны открывать чат. Пусто = только своя кнопка.
+  var CATCH = [];
 
-# ФИЛОСОФИЯ — читается в каждом ответе
+  // Состояние живёт снаружи — переживает пересоздание элементов
+  var history = [];
+  var busy = false;
+  var greeted = false;
+  var wasOpen = false;
 
-Мы не продаём переезд. Мы продаём честный ответ.
+  var CSS = [
+    ".rt-launch{position:fixed;right:22px;bottom:96px;z-index:2147483646;padding:14px 24px;",
+    "border:1px solid #C9A227;background:rgba(8,36,33,.94);color:#F3EAD8;",
+    "font:500 14px/1 Georgia,'Times New Roman',serif;letter-spacing:.06em;",
+    "border-radius:2px;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,.4);",
+    "transition:background .2s,border-color .2s;-webkit-tap-highlight-color:transparent}",
+    ".rt-launch:hover{background:#0E3B32;border-color:#E3C766}",
+    ".rt-launch:focus-visible{outline:2px solid #E3C766;outline-offset:3px}",
+    ".rt-launch[hidden]{display:none}",
 
-Если человек после тура решит НЕ переезжать — это тоже успех: он сберёг годы и деньги. Гиду передача клиента в другую страну засчитывается наравне с проданным туром, чтобы честность не била его по доходу.
+    ".rt-panel{position:fixed;right:22px;bottom:22px;z-index:2147483647;width:390px;",
+    "max-width:calc(100vw - 32px);height:580px;max-height:calc(100vh - 44px);",
+    "display:none;flex-direction:column;background:#082421;color:#F3EAD8;",
+    "border:1px solid #C9A227;border-radius:2px;box-shadow:0 24px 70px rgba(0,0,0,.55);",
+    "font-family:Georgia,'Times New Roman',serif}",
+    ".rt-panel.rt-open{display:flex}",
 
-# СТРАНЫ
+    ".rt-head{display:flex;align-items:center;justify-content:space-between;",
+    "padding:16px 20px;border-bottom:1px solid rgba(201,162,39,.35)}",
+    ".rt-brand{font-size:12px;letter-spacing:.22em;color:#E3C766}",
+    ".rt-x{background:none;border:none;color:#F3EAD8;font-size:24px;line-height:1;",
+    "cursor:pointer;padding:2px 6px;opacity:.75}",
+    ".rt-x:hover{opacity:1}",
 
-Открыты: Испания, Таиланд, Панама, Франция.
-В очереди: Казахстан, Кипр, Сербия, Турция, ОАЭ, Аргентина, Китай. По ним можно записаться в лист ожидания.
+    ".rt-log{flex:1;overflow-y:auto;padding:18px 20px;display:flex;",
+    "flex-direction:column;gap:14px}",
+    ".rt-b{max-width:88%;padding:11px 15px;font-size:15px;line-height:1.55;",
+    "white-space:pre-wrap;word-wrap:break-word;border-radius:2px}",
+    ".rt-b.bot{background:rgba(243,234,216,.07);border-left:2px solid #C9A227;align-self:flex-start}",
+    ".rt-b.me{background:#C9A227;color:#17130A;align-self:flex-end}",
+    ".rt-b.err{background:rgba(170,60,50,.18);border-left:2px solid #AA3C32;align-self:flex-start}",
+    ".rt-b a{color:#E3C766;text-decoration:underline;word-break:break-all}",
+    ".rt-b.me a{color:#17130A}",
+    ".rt-dots span{opacity:.35;animation:rtd 1.2s infinite}",
+    ".rt-dots span:nth-child(2){animation-delay:.2s}",
+    ".rt-dots span:nth-child(3){animation-delay:.4s}",
+    "@keyframes rtd{0%,60%,100%{opacity:.25}30%{opacity:1}}",
 
-# ЦЕНЫ
+    ".rt-foot{border-top:1px solid rgba(201,162,39,.35);padding:12px;display:flex;gap:8px}",
+    ".rt-in{flex:1;resize:none;min-height:46px;max-height:120px;",
+    "background:rgba(243,234,216,.06);border:1px solid rgba(201,162,39,.4);color:#F3EAD8;",
+    "padding:13px;font:inherit;font-size:15px;border-radius:2px}",
+    ".rt-in::placeholder{color:rgba(243,234,216,.45)}",
+    ".rt-in:focus{outline:none;border-color:#C9A227}",
+    ".rt-go{background:#C9A227;border:none;color:#17130A;padding:0 20px;",
+    "font:600 17px/1 inherit;cursor:pointer;border-radius:2px}",
+    ".rt-go:disabled{opacity:.4;cursor:default}",
 
-— Консультация 1 час по видео — $100 / 9 000 ₽
-— Тур 3 дня — $250 с человека / 22 500 ₽ (группа до 4)
-— Тур 7 дней — $750 с человека / 67 500 ₽ (группа до 4)
-— Индивидуальный тур 7 дней — $3 000
+    "@media (max-width:520px){.rt-panel{right:0;bottom:0;width:100vw;height:100dvh;",
+    "max-height:none;border:none}.rt-launch{right:16px;bottom:84px;padding:13px 20px}}"
+  ].join("");
 
-Скидка −$100 с человека тем, кто был на консультации.
-Дети — только индивидуальный формат.
-Проживание и перелёт оплачиваются отдельно.
-Полная оплата вперёд, без депозита.
-Оплата: СБП, картой любого банка. Счёт приходит в Telegram.
-Рублёвые цены фиксированные, по курсу не пересчитываются.
-
-# ЧТО ВХОДИТ В ТУР
-
-— Личный гид-переводчик, 6 часов в день
-— Транспорт на все дни программы
-— Встреча в аэропорту и проводы
-— «День местного» с совместным ужином
-— Консультация проверенного юриста
-— Школы и банки
-— Три района с реальной арендой
-— Участие до 4 человек
-
-Пакет, который клиент увозит:
-— Контакты проверенных людей: юрист, риелтор, врач, школы, банк
-— Приложения местных: такси, доставка, банки, оплата счетов
-— Карты районов по цене и удобству
-— Пошаговый план переезда под свою ситуацию
-— Реальный бюджет месяца жизни
-— Анализ, насколько страна подходит именно этому человеку
-
-«День местного» — самый сильный день тура. Утром рынок, где человек сам набирает продукты на неделю на свою семью. Днём готовят вместе. После обеда раскладывают бюджет по строчкам. Вечером обычные дела: аптека, супермаркет, дорога в час пик. Человек приезжает с картинкой из интернета, а уезжает с пониманием, сколько стоит его жизнь здесь на самом деле.
-
-# УСЛОВИЯ ОТМЕНЫ — называй полностью, не сокращай
-
-— больше чем за 24 часа до встречи — возвращаем всё
-— меньше чем за 24 часа — возвращаем половину
-— не приехали — сумма не возвращается
-
-В сложных ситуациях идём навстречу.
-
-# ГИДЫ
-
-Люди, которые сами переехали 1–5 лет назад и помнят каждый шаг. Проходят отбор.
-Процесс отбора подробно не расписывай — если спрашивают, скажи коротко, что отбор есть, и предложи задать вопросы гиду на консультации.
-
-# ОТЗЫВЫ
-
-Настоящих отзывов пока мало. Выдумывать нельзя ни при каких условиях.
-Если спрашивают — честно: сервис запустился недавно, отзывы появятся. Вместо них предложи задать любой вопрос до оплаты, в том числе про минусы страны.
-
-# ПЕРЕХОД В БОТА
-
-С ТРЕТЬЕГО своего ответа, не раньше, предлагай консультацию и давай ссылку.
-
-Если страна в разговоре прозвучала — обязательно добавь её код:
-https://t.me/Reloctour_bot?start=web_chat_es (Испания)
-th Таиланд · pa Панама · fr Франция · kz Казахстан · cy Кипр · rs Сербия · tr Турция · ae ОАЭ · ar Аргентина · cn Китай
-
-Если страна не обсуждалась:
-https://t.me/Reloctour_bot?start=web_chat
-
-Текст ссылки: «Записаться на консультацию» или «Продолжить в Telegram».
-
-# КАК ОТВЕЧАТЬ
-
-— Коротко. 2–4 предложения на простой вопрос.
-— Спокойно и честно. Говори и о минусах стран, не расхваливай.
-— Задавай встречный вопрос, чтобы понять ситуацию: состав семьи, бюджет, удалённая работа или поиск на месте, сроки.
-— Отвечай на языке, на котором пишет человек.
-
-# ЗАПРЕЩЕНО
-
-— Обещать визу, ВНЖ или гарантированный результат
-— Давать юридические консультации по конкретной ситуации человека
-— Называть точные сроки получения документов
-— Давить, торопить, придумывать дефицит («осталось 2 места», «только сегодня»)
-— Придумывать отзывы, имена клиентов, цифры и статистику
-— Формулировки «без прикрас», «ваше место», «сеть гидов-резидентов»
-
-Если вопрос про конкретную ситуацию человека — честно скажи, что это разбирает гид на консультации, и дай ссылку в бота.
-
-Мы оказываем информационные услуги и не гарантируем визу, ВНЖ или иной статус.`;
-
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5";
-const MAX_CHARS = 2000;
-const MAX_TURNS = 20;
-
-exports.handler = async (event) => {
-  if (event.httpMethod !== "POST") {
-    return json(405, { error: "Только POST" });
+  function ensureStyle() {
+    if (document.getElementById("rt-style")) return;
+    var style = document.createElement("style");
+    style.id = "rt-style";
+    style.textContent = CSS;
+    (document.head || document.documentElement).appendChild(style);
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return json(500, { error: "На сервере не задан ANTHROPIC_API_KEY" });
-  }
+  function ensureWidget() {
+    ensureStyle();
+    if (!document.body) return;
+    if (document.getElementById("rt-panel")) return;
 
-  let body;
-  try {
-    body = JSON.parse(event.body || "{}");
-  } catch {
-    return json(400, { error: "Некорректный запрос" });
-  }
+    var launch = document.createElement("button");
+    launch.type = "button";
+    launch.id = "rt-launch";
+    launch.className = "rt-launch";
+    launch.textContent = "Задать вопрос";
 
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  if (messages.length === 0) {
-    return json(400, { error: "Пустой запрос" });
-  }
+    var panel = document.createElement("div");
+    panel.id = "rt-panel";
+    panel.className = "rt-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-label", "Чат с RELÓCTOUR");
+    panel.innerHTML =
+      '<div class="rt-head"><span class="rt-brand">RELÓCTOUR</span>' +
+      '<button type="button" class="rt-x" aria-label="Закрыть">&times;</button></div>' +
+      '<div class="rt-log" aria-live="polite"></div>' +
+      '<div class="rt-foot">' +
+      '<textarea class="rt-in" rows="1" maxlength="2000" ' +
+      'placeholder="Спросите про страну, цены или сроки"></textarea>' +
+      '<button type="button" class="rt-go" aria-label="Отправить">&rarr;</button></div>';
 
-  const safe = messages
-    .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .slice(-MAX_TURNS)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_CHARS) }));
+    document.body.appendChild(launch);
+    document.body.appendChild(panel);
 
-  if (safe.length === 0 || safe[safe.length - 1].role !== "user") {
-    return json(400, { error: "Некорректная история сообщений" });
-  }
+    var log = panel.querySelector(".rt-log");
+    var input = panel.querySelector(".rt-in");
+    var go = panel.querySelector(".rt-go");
+    var x = panel.querySelector(".rt-x");
 
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 700,
-        system: SYSTEM_PROMPT,
-        messages: safe,
-      }),
-    });
-
-    if (!res.ok) {
-      const detail = await res.text();
-      console.error("Anthropic API error:", res.status, detail);
-      return json(502, { error: "Сервис временно недоступен. Напишите нам в Telegram." });
+    function bubble(text, cls) {
+      var el = document.createElement("div");
+      el.className = "rt-b " + cls;
+      linkify(el, text);
+      log.appendChild(el);
+      log.scrollTop = log.scrollHeight;
+      return el;
     }
 
-    const data = await res.json();
-    const reply = (data.content || [])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
+    // Превращает ссылки в тексте в кликабельные, не используя innerHTML
+    function linkify(el, text) {
+      var re = /(https?:\/\/[^\s<>()]+)/g;
+      var last = 0;
+      var m;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > last) {
+          el.appendChild(document.createTextNode(text.slice(last, m.index)));
+        }
+        var url = m[1].replace(/[.,;:!?]+$/, "");
+        var a = document.createElement("a");
+        a.href = url;
+        a.textContent = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        el.appendChild(a);
+        last = m.index + url.length;
+      }
+      if (last < text.length) {
+        el.appendChild(document.createTextNode(text.slice(last)));
+      }
+    }
 
-    return json(200, { reply: reply || "Не смог сформулировать ответ. Попробуйте переспросить." });
-  } catch (err) {
-    console.error("Chat function failed:", err);
-    return json(500, { error: "Что-то пошло не так. Напишите нам в Telegram." });
+    // Восстановить переписку, если элементы пересоздались
+    for (var i = 0; i < history.length; i++) {
+      if (i === 0 && greeted) bubble(GREETING, "bot");
+      bubble(history[i].content, history[i].role === "user" ? "me" : "bot");
+    }
+    if (greeted && history.length === 0) bubble(GREETING, "bot");
+
+    function open() {
+      panel.classList.add("rt-open");
+      launch.hidden = true;
+      wasOpen = true;
+      if (!greeted) {
+        bubble(GREETING, "bot");
+        greeted = true;
+      }
+      setTimeout(function () { input.focus(); }, 50);
+    }
+
+    function close() {
+      panel.classList.remove("rt-open");
+      launch.hidden = false;
+      wasOpen = false;
+    }
+
+    if (wasOpen) {
+      panel.classList.add("rt-open");
+      launch.hidden = true;
+    }
+
+    launch.addEventListener("click", open);
+    x.addEventListener("click", close);
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && panel.classList.contains("rt-open")) close();
+    });
+
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-rt-open]"),
+      function (el) {
+        el.addEventListener("click", function (e) { e.preventDefault(); open(); });
+      }
+    );
+
+    if (CATCH.length) {
+      Array.prototype.forEach.call(
+        document.querySelectorAll("a,button"),
+        function (el) {
+          var t = (el.textContent || "").trim().toLowerCase();
+          if (CATCH.indexOf(t) !== -1) {
+            el.addEventListener("click", function (e) { e.preventDefault(); open(); });
+          }
+        }
+      );
+    }
+
+    input.addEventListener("input", function () {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 120) + "px";
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    go.addEventListener("click", submit);
+
+    function submit() {
+      var text = input.value.trim();
+      if (!text || busy) return;
+
+      bubble(text, "me");
+      history.push({ role: "user", content: text });
+      input.value = "";
+      input.style.height = "auto";
+
+      busy = true;
+      go.disabled = true;
+
+      var typing = bubble("", "bot");
+      typing.innerHTML = '<span class="rt-dots"><span>•</span><span>•</span><span>•</span></span>';
+
+      fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history })
+      })
+        .then(function (r) {
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          typing.remove();
+          if (!res.ok || !res.data.reply) {
+            bubble(
+              (res.data && res.data.error) ||
+                "Не получилось ответить. Напишите в Telegram: @Reloctour_bot",
+              "err"
+            );
+            history.pop();
+            return;
+          }
+          bubble(res.data.reply, "bot");
+          history.push({ role: "assistant", content: res.data.reply });
+        })
+        .catch(function () {
+          typing.remove();
+          bubble("Нет связи с сервером. Напишите в Telegram: @Reloctour_bot", "err");
+          history.pop();
+        })
+        .then(function () {
+          busy = false;
+          go.disabled = false;
+          input.focus();
+        });
+    }
   }
-};
 
-function json(statusCode, payload) {
-  return {
-    statusCode,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(payload),
-  };
-}
+  // Ставим сразу, потом следим — если страницу перерисовали, возвращаем виджет
+  ensureWidget();
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ensureWidget);
+  }
+  window.addEventListener("load", ensureWidget);
+  setInterval(ensureWidget, 1000);
+})();
